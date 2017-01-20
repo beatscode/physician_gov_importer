@@ -1,2 +1,5 @@
 *.csv
+*.cpu
+*.svg
+physician_gov_importer*
 
