@@ -2,22 +2,34 @@ package main
 
 import (
 	"encoding/csv"
-	//"encoding/json"
 	"fmt"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
-	//"github.com/pkg/profile"
-	_ "io"
+	"io"
 	"log"
+	"math"
 	"os"
-	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
-//Specialty
+var physician Physician
+var physicians []Physician
+var specialtyArray []Specialty
+var readLimit = 23000000
+var bulkAmount = 1000
+var db *gorm.DB
+var wg sync.WaitGroup
+var specialties [][]string
+var physicianSpecialties [][]string
+var physicianCSV = "Physician_Compare_National_Downloadable_File.csv"
+var specialtyCombinedCSV = "big_physician_specialty_list_combined.csv"
+var specialtiesCSV = "specialties.csv"
+var err error
+
+//Specialty from content library
 type Specialty struct {
 	speID            string
 	speName          string
@@ -49,17 +61,6 @@ func getSpecialtyIDFromPhysicianSpecialty(physicianSpecialty string) string {
 	return specialtyID
 }
 
-var physician Physician
-var physicians []Physician
-var specialtyArray []Specialty
-var readLimit = 10000
-var db *gorm.DB
-var wg sync.WaitGroup
-var specialties [][]string
-var physicianSpecialties [][]string
-var physicianCSV = "/Users/alex/Downloads/Physician_Compare_National_Downloadable_File.csv"
-var err error
-
 func buildSpecialtyArray() {
 	//Build Mapped Specialty List
 	for k, v := range specialties {
@@ -75,23 +76,25 @@ func buildSpecialtyArray() {
 	}
 }
 
-func main() {
-	//defer profile.Start().Stop()
-	//	p := profile.Start(profile.CPUProfile, profile.ProfilePath("."), profile.NoShutdownHook)
+func dbConnect() {
 
-	specialtyCombinedCSV := "big_physician_specialty_list_combined.csv"
-	specialtiesCSV := "specialties.csv"
-	physicianSpecialties = readCSV(specialtyCombinedCSV)
-	specialties = readCSV(specialtiesCSV)
-
-	db, err = gorm.Open("mysql", "db_leoprod:4DMXexDaw8s@/data_gov?charset=utf8&parseTime=True&loc=Local")
+	db, err = gorm.Open("mysql", "db_leoprod:4DMXexDaw8s@/data_gov?charset=utf8&multiStatements=true&parseTime=True&loc=Local")
 	if err != nil {
 		log.Fatal("Cannot open DB connection", err)
 	}
+
+}
+func main() {
+
+	physicianSpecialties = readCSV(specialtyCombinedCSV)
+	specialties = readCSV(specialtiesCSV)
+	dbConnect()
 	defer db.Close()
-	db.DB().SetMaxOpenConns(0)
+	db.DB().SetMaxOpenConns(99)
+	db.DB().SetMaxIdleConns(50)
 	db.AutoMigrate(&Physician{})
 	db.Model(&Physician{}).AddIndex("idx_last_name_state", "last_name", "state")
+	db.Model(&Physician{}).AddIndex("idx_unique_npi", "npi")
 	//fmt.Println(db.HasTable(&Physician{}))
 	buildSpecialtyArray()
 	//Open File
@@ -104,53 +107,121 @@ func main() {
 	_, err = reader.Read()
 	checkErr(err)
 
-	var tx *gorm.DB
-	tx = db.Begin()
 	db.Exec("truncate physicians")
-	for i := 0; i < readLimit; i++ {
+	for i := 0; i <= readLimit; i++ {
 		//Reads Next Record and unmarshals into physician type
-		//err := Unmarshal(reader, &physician)
-		//checkErr(err)
 		record, err := reader.Read()
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			panic(err)
 		}
 		physician = convertCSVRecordToPhysician(record)
 		//loop through to find strings
 		//replace string if
-		physician.FirstName = strings.Title(physician.FirstName)
-		physician.LastName = strings.Title(physician.LastName)
+		physician.FirstName = strings.Title(strings.ToLower(physician.FirstName))
+		physician.LastName = strings.Title(strings.ToLower(physician.LastName))
 		if physician.MedicalSchoolName == "OTHER" {
 			physician.MedicalSchoolName = ""
 		} else {
 			CapitalizeTitle(&physician.MedicalSchoolName)
 		}
 
-		physician.MiddleName = strings.Title(physician.MiddleName)
+		physician.MiddleName = strings.Title(strings.ToLower(physician.MiddleName))
 		CapitalizeTitle(&physician.OrganizationLegalName)
 		CapitalizeTitle(&physician.Line1StreetAddress)
 		CapitalizeTitle(&physician.Line2StreetAddress)
 		CapitalizeTitle(&physician.City)
 		physician.SpecialtyID = getSpecialtyIDFromPhysicianSpecialty(physician.PrimarySpecialty)
-		wg.Add(1)
-		go massageAndSavePhysician(physician, tx)
+
+		physicians = append(physicians, physician)
+
+		if math.Mod(float64(i), float64(bulkAmount)) == 0 && i != 0 {
+			fmt.Println(i, "Records: From ", i-bulkAmount, "to", i)
+			wg.Add(1)
+			go bulkSavePhysicians(physicians[i-bulkAmount : i])
+		}
 	}
-	tx.Commit()
+
 	fmt.Println(readLimit, "records inserted")
 	wg.Wait()
-	//p.Stop()
-	//fmt.Println(len(physicians), "physicians")
 }
 
-func massageAndSavePhysician(physician Physician, tx *gorm.DB) {
-	/*	db, err := gorm.Open("mysql", "db_leoprod:4DMXexDaw8s@/data_gov?charset=utf8&parseTime=True&loc=Local")
-		if err != nil {
-			log.Fatal("Cannot open DB connection", err)
+func bulkSavePhysicians(_physicians []Physician) {
+	defer func() {
+		if x := recover(); x != nil {
+			fmt.Println(x)
+			//log.Fatal(x)
+			time.Sleep(time.Duration(5) * time.Second)
 		}
-		defer db.Close()
-	*/defer wg.Done()
-	tx.Create(&physician)
-	//db.Create(&physician)
+
+	}()
+	defer wg.Done()
+
+	sqlStringArray := buildSQLStatements(_physicians)
+	batchSQL := fmt.Sprintf("insert ignore into physicians values %s ;", strings.Join(sqlStringArray, ","))
+	tx := db.Begin()
+	errors := tx.Exec(batchSQL).GetErrors()
+	if len(errors) > 0 {
+		panic(errors)
+	}
+	tx.Commit()
+}
+
+func buildSQLStatements(_physicians []Physician) []string {
+
+	var valueStr string
+	var valueArr []string
+	for _, phys := range _physicians {
+
+		valueStr = fmt.Sprintf(`( "%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s" )`, phys.NPI,
+			phys.PACID,
+			phys.ProfessionalEnrollmentID,
+			strings.Replace(phys.LastName, "'", "\\'", -1),
+			phys.FirstName,
+			phys.MiddleName,
+			phys.Suffix,
+			phys.Gender,
+			phys.Credential,
+			strings.Replace(phys.MedicalSchoolName, "'", "\\'", -1),
+			phys.GraduationYear,
+			phys.PrimarySpecialty,
+			phys.SecondarySpecialty1,
+			phys.SecondarySpecialty2,
+			phys.SecondarySpecialty3,
+			phys.SecondarySpecialty4,
+			phys.AllSecondarySpecialties,
+			strings.Replace(phys.OrganizationLegalName, "'", "\\'", -1),
+			phys.GroupPracticePACID,
+			phys.NumberOfGroupPracticeMembers,
+			strings.Replace(phys.Line1StreetAddress, "'", "\\'", -1),
+			phys.Line2StreetAddress,
+			phys.MarkerOfAddressLine2Suppression,
+			phys.City,
+			phys.State,
+			phys.ZipCode,
+			phys.PhoneNumber,
+			phys.HospitalAffiliationCCN1,
+			phys.HospitalAffiliationLBN1,
+			phys.HospitalAffiliationCCN2,
+			phys.HospitalAffiliationLBN2,
+			phys.HospitalAffiliationCCN3,
+			phys.HospitalAffiliationLBN3,
+			phys.HospitalAffiliationCCN4,
+			phys.HospitalAffiliationLBN4,
+			phys.HospitalAffiliationCCN5,
+			phys.HospitalAffiliationLBN5,
+			phys.ProfessionalAcceptsMedicareAssignment,
+			phys.ReportedQualityMeasures,
+			phys.UsedElectronicHealthRecords,
+			phys.ParticipatedInTheMedicareMaintenance,
+			phys.CommittedToHeartHealth,
+			phys.SpecialtyID)
+
+		valueArr = append(valueArr, valueStr)
+	}
+	return valueArr
 }
 
 //CapitalizeTitle set the proper title style
@@ -242,36 +313,6 @@ func convertCSVRecordToPhysician(record []string) Physician {
 	return phy
 }
 
-func Unmarshal(reader *csv.Reader, v interface{}) error {
-	record, err := reader.Read()
-	if err != nil {
-		return err
-	}
-	s := reflect.ValueOf(v).Elem()
-	/*if s.NumField() != len(record) {
-		return &FieldMismatch{s.NumField(), len(record)}
-	}*/
-	for i := 0; i < s.NumField(); i++ {
-		if i >= len(record) {
-			break
-		}
-		f := s.Field(i)
-		switch f.Type().String() {
-		case "string":
-			f.SetString(record[i])
-		case "int":
-			ival, err := strconv.ParseInt(record[i], 10, 0)
-			if err != nil {
-				return err
-			}
-			f.SetInt(ival)
-		default:
-			return &UnsupportedType{f.Type().String()}
-		}
-	}
-	return nil
-}
-
 type Physician struct {
 	NPI                                   string
 	PACID                                 string `gorm:"column:pacid"`
@@ -316,20 +357,4 @@ type Physician struct {
 	ParticipatedInTheMedicareMaintenance  string
 	CommittedToHeartHealth                string
 	SpecialtyID                           string
-}
-
-type FieldMismatch struct {
-	expected, found int
-}
-
-func (e *FieldMismatch) Error() string {
-	return "CSV line fields mismatch. Expected " + strconv.Itoa(e.expected) + " found " + strconv.Itoa(e.found)
-}
-
-type UnsupportedType struct {
-	Type string
-}
-
-func (e *UnsupportedType) Error() string {
-	return "Unsupported type: " + e.Type
 }

@@ -42,7 +42,7 @@ func TestCreatePhysicianFromCSV(t *testing.T) {
 	}
 }
 
-func BenchmarkBulkCapitalizeTitl(b *testing.B) {
+func BenchmarkBulkCapitalizeTitle(b *testing.B) {
 	b.ReportAllocs()
 	fmt.Println(physicianCSV)
 	filehandle, err := os.Open(physicianCSV)
