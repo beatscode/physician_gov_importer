@@ -6,6 +6,7 @@ import (
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"os"
@@ -78,7 +79,12 @@ func buildSpecialtyArray() {
 
 func dbConnect() {
 
-	db, err = gorm.Open("mysql", "db_leoprod:4DMXexDaw8s@/data_gov?charset=utf8&multiStatements=true&parseTime=True&loc=Local")
+	f, err := os.Open(".db")
+	checkErr(err)
+
+	dbstring, err := ioutil.ReadAll(f)
+
+	db, err = gorm.Open("mysql", dbstring)
 	if err != nil {
 		log.Fatal("Cannot open DB connection", err)
 	}
@@ -94,7 +100,7 @@ func main() {
 	db.DB().SetMaxIdleConns(50)
 	db.AutoMigrate(&Physician{})
 	db.Model(&Physician{}).AddIndex("idx_last_name_state", "last_name", "state")
-	db.Model(&Physician{}).AddIndex("idx_unique_npi", "npi")
+	db.Model(&Physician{}).AddIndex("idx_npi", "npi")
 	//fmt.Println(db.HasTable(&Physician{}))
 	buildSpecialtyArray()
 	//Open File

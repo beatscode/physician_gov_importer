@@ -2,4 +2,6 @@
 *.cpu
 *.svg
 physician_gov_importer*
+.db
+debug
 
