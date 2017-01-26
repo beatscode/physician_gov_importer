@@ -19,6 +19,22 @@ func TestProperCapitalization(t *testing.T) {
 	}
 }
 
+func TestAbbreviation(t *testing.T) {
+
+	s := "Central Florida Pulmonary Group Pa"
+	CapitalizeMedicalAbbreviations(&s)
+	if s != "Central Florida Pulmonary Group PA" {
+		t.Error("Invalid Substitution\n", s)
+	}
+
+	s = "'A' Street Clinic Of Chiropractic, Pllc"
+	CapitalizeMedicalAbbreviations(&s)
+	if s != "'A' Street Clinic Of Chiropractic, PLLC" {
+		t.Error("Invalid Substitution\n", s)
+	}
+
+}
+
 func TestCreatePhysicianFromCSV(t *testing.T) {
 
 	fmt.Println(physicianCSV)

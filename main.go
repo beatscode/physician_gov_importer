@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"github.com/jinzhu/gorm"
@@ -83,8 +84,9 @@ func dbConnect() {
 	checkErr(err)
 
 	dbstring, err := ioutil.ReadAll(f)
+	dbstring = bytes.TrimSpace(dbstring)
+	db, err = gorm.Open("mysql", string(dbstring))
 
-	db, err = gorm.Open("mysql", dbstring)
 	if err != nil {
 		log.Fatal("Cannot open DB connection", err)
 	}
@@ -96,12 +98,15 @@ func main() {
 	specialties = readCSV(specialtiesCSV)
 	dbConnect()
 	defer db.Close()
-	db.DB().SetMaxOpenConns(99)
-	db.DB().SetMaxIdleConns(50)
+	db.DB().SetMaxOpenConns(30)
+	db.DB().SetMaxIdleConns(10)
+	db.DB().SetConnMaxLifetime(time.Second * 45)
+
 	db.AutoMigrate(&Physician{})
 	db.Model(&Physician{}).AddIndex("idx_last_name_state", "last_name", "state")
+
+	db.Model(&Physician{}).AddIndex("idx_organization_legal_name", "organization_legal_name")
 	db.Model(&Physician{}).AddIndex("idx_npi", "npi")
-	//fmt.Println(db.HasTable(&Physician{}))
 	buildSpecialtyArray()
 	//Open File
 	//Read each line until EOF
@@ -136,6 +141,7 @@ func main() {
 
 		physician.MiddleName = strings.Title(strings.ToLower(physician.MiddleName))
 		CapitalizeTitle(&physician.OrganizationLegalName)
+		CapitalizeMedicalAbbreviations(&physician.OrganizationLegalName)
 		CapitalizeTitle(&physician.Line1StreetAddress)
 		CapitalizeTitle(&physician.Line2StreetAddress)
 		CapitalizeTitle(&physician.City)
@@ -228,6 +234,29 @@ func buildSQLStatements(_physicians []Physician) []string {
 		valueArr = append(valueArr, valueStr)
 	}
 	return valueArr
+}
+
+//CapitalizeMedicalAbbreviations set the proper capitalization for abbreviations style
+func CapitalizeMedicalAbbreviations(title *string) {
+	defer func() {
+		if x := recover(); x != nil {
+			log.Println("Error", x)
+			log.Println("Title: ", *title, len(*title))
+		}
+	}()
+	if len(*title) == 0 {
+		return
+	}
+
+	abbreviations := []string{"Pc", "Pllc", "Ltd", "Ps", "Llc", "Pa"}
+	var re *regexp.Regexp
+	for _, preposition := range abbreviations {
+		matchAbbrev := fmt.Sprintf("%s$", preposition)
+		re = regexp.MustCompile(matchAbbrev)
+		if re.Match([]byte(*title)) {
+			*title = re.ReplaceAllString(*title, strings.ToUpper(preposition))
+		}
+	}
 }
 
 //CapitalizeTitle set the proper title style
