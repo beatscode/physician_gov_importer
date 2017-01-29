@@ -21,7 +21,7 @@ var physician Physician
 var physicians []Physician
 var specialtyArray []Specialty
 var readLimit = 23000000
-var bulkAmount = 1000
+var bulkAmount = 2000
 var db *gorm.DB
 var wg sync.WaitGroup
 var specialties [][]string
@@ -100,7 +100,7 @@ func main() {
 	defer db.Close()
 	db.DB().SetMaxOpenConns(30)
 	db.DB().SetMaxIdleConns(10)
-	db.DB().SetConnMaxLifetime(time.Second * 45)
+	db.DB().SetConnMaxLifetime(time.Second * 144800)
 
 	db.AutoMigrate(&Physician{})
 	db.Model(&Physician{}).AddIndex("idx_last_name_state", "last_name", "state")
@@ -152,7 +152,12 @@ func main() {
 		if math.Mod(float64(i), float64(bulkAmount)) == 0 && i != 0 {
 			fmt.Println(i, "Records: From ", i-bulkAmount, "to", i)
 			wg.Add(1)
-			go bulkSavePhysicians(physicians[i-bulkAmount : i])
+			sliceOfPhys := make([]Physician, bulkAmount)
+			copy(sliceOfPhys, physicians)
+			//time.Sleep(time.Duration(2) * time.Second)
+			go bulkSavePhysicians(sliceOfPhys)
+			physicians = physicians[:0]
+
 		}
 	}
 
@@ -160,19 +165,28 @@ func main() {
 	wg.Wait()
 }
 
+func formatZipcode(zipcode *string) {
+	if len(*zipcode) <= 5 {
+		return
+	}
+	strslice := strings.Split(*zipcode, "")
+	if strslice[5] == "-" {
+		return
+	}
+	*zipcode = fmt.Sprintf("%s-%s", strings.Join(strslice[:5], ""), strings.Join(strslice[5:], ""))
+}
+
 func bulkSavePhysicians(_physicians []Physician) {
 	defer func() {
 		if x := recover(); x != nil {
 			fmt.Println(x)
-			//log.Fatal(x)
-			time.Sleep(time.Duration(5) * time.Second)
+			//time.Sleep(time.Duration(2) * time.Second)
 		}
-
 	}()
 	defer wg.Done()
 
 	sqlStringArray := buildSQLStatements(_physicians)
-	batchSQL := fmt.Sprintf("insert ignore into physicians values %s ;", strings.Join(sqlStringArray, ","))
+	batchSQL := fmt.Sprintf("insert into physicians values %s ;", strings.Join(sqlStringArray, ","))
 	tx := db.Begin()
 	errors := tx.Exec(batchSQL).GetErrors()
 	if len(errors) > 0 {
@@ -248,7 +262,7 @@ func CapitalizeMedicalAbbreviations(title *string) {
 		return
 	}
 
-	abbreviations := []string{"Pc", "Pllc", "Ltd", "Ps", "Llc", "Pa"}
+	abbreviations := []string{"Llp", "Pc", "Pllc", "Ltd", "Ps", "Llc", "Pa"}
 	var re *regexp.Regexp
 	for _, preposition := range abbreviations {
 		matchAbbrev := fmt.Sprintf("%s$", preposition)

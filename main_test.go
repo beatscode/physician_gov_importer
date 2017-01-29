@@ -19,6 +19,21 @@ func TestProperCapitalization(t *testing.T) {
 	}
 }
 
+func TestRenderZipcode(t *testing.T) {
+
+	zipcodes := []string{"330292810", "38138", "480096443", "12345-4562"}
+	formattedZips := []string{"33029-2810", "38138", "48009-6443", "12345-4562"}
+	for i, zip := range zipcodes {
+		formatZipcode(&zip)
+		fmt.Println(zip, formattedZips[i])
+		if zip != formattedZips[i] {
+			t.Error("Error formatting zip")
+		} else {
+			t.Log(zip, "works")
+		}
+	}
+}
+
 func TestAbbreviation(t *testing.T) {
 
 	s := "Central Florida Pulmonary Group Pa"
