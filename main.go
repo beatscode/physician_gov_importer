@@ -177,9 +177,11 @@ func formatZipcode(zipcode *string) {
 }
 
 func bulkSavePhysicians(_physicians []Physician) {
+	tx := db.Begin()
 	defer func() {
 		if x := recover(); x != nil {
 			fmt.Println(x)
+			tx.Rollback()
 			//time.Sleep(time.Duration(2) * time.Second)
 		}
 	}()
@@ -187,7 +189,6 @@ func bulkSavePhysicians(_physicians []Physician) {
 
 	sqlStringArray := buildSQLStatements(_physicians)
 	batchSQL := fmt.Sprintf("insert into physicians values %s ;", strings.Join(sqlStringArray, ","))
-	tx := db.Begin()
 	errors := tx.Exec(batchSQL).GetErrors()
 	if len(errors) > 0 {
 		panic(errors)
