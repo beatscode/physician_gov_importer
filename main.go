@@ -21,7 +21,7 @@ var physician Physician
 var physicians []Physician
 var specialtyArray []Specialty
 var readLimit = 23000000
-var bulkAmount = 2000
+var bulkAmount = 3000
 var db *gorm.DB
 var wg sync.WaitGroup
 var specialties [][]string
@@ -98,7 +98,7 @@ func main() {
 	specialties = readCSV(specialtiesCSV)
 	dbConnect()
 	defer db.Close()
-	db.DB().SetMaxOpenConns(30)
+	db.DB().SetMaxOpenConns(90)
 	db.DB().SetMaxIdleConns(10)
 	db.DB().SetConnMaxLifetime(time.Second * 144800)
 
@@ -145,6 +145,7 @@ func main() {
 		CapitalizeTitle(&physician.Line1StreetAddress)
 		CapitalizeTitle(&physician.Line2StreetAddress)
 		CapitalizeTitle(&physician.City)
+		formatZipcode(&physician.ZipCode)
 		physician.SpecialtyID = getSpecialtyIDFromPhysicianSpecialty(physician.PrimarySpecialty)
 
 		physicians = append(physicians, physician)
@@ -154,7 +155,6 @@ func main() {
 			wg.Add(1)
 			sliceOfPhys := make([]Physician, bulkAmount)
 			copy(sliceOfPhys, physicians)
-			//time.Sleep(time.Duration(2) * time.Second)
 			go bulkSavePhysicians(sliceOfPhys)
 			physicians = physicians[:0]
 
