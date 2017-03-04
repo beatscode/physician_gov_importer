@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
+	"github.com/pkg/profile"
 	"io"
 	"io/ioutil"
 	"log"
@@ -20,8 +21,8 @@ import (
 var physician Physician
 var physicians []Physician
 var specialtyArray []Specialty
-var readLimit = 23000000
-var bulkAmount = 3000
+var readLimit = 22000000
+var bulkAmount = 2000
 var db *gorm.DB
 var wg sync.WaitGroup
 var specialties [][]string
@@ -94,6 +95,8 @@ func dbConnect() {
 }
 func main() {
 
+	p := profile.Start(profile.MemProfile, profile.ProfilePath("."), profile.NoShutdownHook)
+	defer p.Stop()
 	physicianSpecialties = readCSV(specialtyCombinedCSV)
 	specialties = readCSV(specialtiesCSV)
 	dbConnect()
